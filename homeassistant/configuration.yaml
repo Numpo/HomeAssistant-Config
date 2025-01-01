@@ -1,0 +1,80 @@
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+sensor:
+# EDF Tempo
+  - platform: rest
+    name: edf_tempo_today
+    resource: "https://www.api-couleur-tempo.fr/api/jourTempo/today"
+    value_template: "{{ value_json.codeJour }}"
+  - platform: rest
+    name: edf_tempo_tomorrow
+    resource: "https://www.api-couleur-tempo.fr/api/jourTempo/tomorrow"
+    value_template: "{{ value_json.codeJour }}"
+
+rest:
+# RER A
+# Try out the PRIM IDFM API here: https://prim.iledefrance-mobilites.fr/fr/apis/idfm-ivtr-requete_unitaire
+# Find your MonitoringRef (station name) here: Value at ArRid column https://data.iledefrance-mobilites.fr/explore/dataset/arrets/table/
+# Find your LineRef (Line name) here: Value at ID_Line column https://data.iledefrance-mobilites.fr/explore/dataset/referentiel-des-lignes/table/?disjunctive.transportsubmode&disjunctive.operatorname&disjunctive.networkname&disjunctive.transportmode
+  - resource: "https://prim.iledefrance-mobilites.fr/marketplace/stop-monitoring?MonitoringRef=STIF:StopArea:SP:474002:&LineRef=STIF:Line::C01742:"
+    headers:
+      apikey: "XXX" # Get a TOKEN from https://connect.iledefrance-mobilites.fr/auth/realms/connect-b2b/login-actions/authenticate?client_id=prim
+      Accept: application/json
+    sensor:
+      - name: "rer_a_direction"
+        value_template: >
+          {{ value_json.Siri.ServiceDelivery.StopMonitoringDelivery[0].MonitoredStopVisit[0].MonitoredVehicleJourney.MonitoredCall.DestinationDisplay[0].value | default('Unknown') }}
+
+      - name: "rer_a_next_times"
+        value_template: >
+          {%- set visits = value_json.Siri.ServiceDelivery.StopMonitoringDelivery[0].MonitoredStopVisit -%}
+          {%- if visits | length > 0 -%}
+            {%- set times = visits | map(attribute='MonitoredVehicleJourney.MonitoredCall.ExpectedDepartureTime') 
+                            | map('as_timestamp') 
+                            | map('timestamp_custom', '%H:%M') | list -%}
+            {{ times[:3] | join(' | ') }}
+          {%- else -%}
+            Aucune heure disponible
+          {%- endif -%}
+
+# RER E
+# Try out SNCF API here: https://playground.navitia.io/play.html?request=https%3A%2F%2Fapi.sncf.com%2Fv1%2Fcoverage%2Fsncf%2Fstop_areas%2Fstop_area%253ARAT%253ASA%253ABASTI%2Flines%2Fline%253ARAT%253AM5%2Fdepartures%3Fcount%3D4%26depth%3D2%26&token=
+# Get a TOKEN from https://numerique.sncf.com/startup/api/token-developpeur/
+# Find stop_areas here: Value in Code UIC column https://ressources.data.sncf.com/explore/dataset/frequentation-gares/table/?sort=nom_gare&disjunctive.nom_gare&disjunctive.code_postal
+# See the SNCF API doc https://doc.navitia.io/#terminus-schedules
+  - resource: "https://XXX@api.sncf.com/v1/coverage/sncf/stop_areas/stop_area:SNCF:87113712/terminus_schedules?forbidden_uris[]=line:SNCF:A&forbidden_uris[]=line:SNCF:P&forbidden_uris[]=physical_mode:Bus&max_date_times=3"
+    sensor:
+      - name: "RER E Direction"
+        value_template: >
+          {%- set schedules = value_json.terminus_schedules
+            | selectattr('display_informations.direction', 'search', 'Nanterre|Paris')
+            | list -%}
+          {%- if schedules | length > 0 -%}
+            {{ schedules[0].display_informations.direction }}
+          {%- else -%}
+            Inconnu
+          {%- endif -%}
+
+      - name: "RER E Next Times"
+        value_template: >
+          {%- set schedules = value_json.terminus_schedules
+            | selectattr('display_informations.direction', 'search', 'Nanterre|Paris')
+            | list -%}
+          {%- if schedules | length > 0 -%}
+            {{ schedules[0].date_times | map(attribute='date_time') 
+            | map('as_timestamp') 
+            | map('timestamp_custom', '%H:%M') 
+            | list | join(' | ') }}
+          {%- else -%}
+            Aucune heure disponible
+          {%- endif -%}
